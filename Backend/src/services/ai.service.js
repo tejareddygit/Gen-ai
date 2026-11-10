@@ -9,13 +9,29 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GOOGLE_GENAI_API_KEY,
   vertexai: false,
 });
-async function invokeGeminiAi() {
-  const response = await ai.models.generateContent({
-    model: "gemini-3.5-flash-lite",
-    contents: "Hi Gemini! what is interview?",
-  });
 
-  console.log("Gemini response:", response.text);
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function generateWithRetry(request, maxAttempts = 3) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await ai.models.generateContent(request);
+    } catch (error) {
+      const status = error.status || error.code;
+
+      if (![503, 429].includes(Number(status)) || attempt === maxAttempts) {
+        throw error;
+      }
+
+      const waitTime = 1500 * Math.pow(2, attempt - 1);
+
+      console.log(
+        `Gemini temporarily unavailable. Retrying in ${waitTime / 1000} seconds... (Attempt ${attempt + 1}/${maxAttempts})`,
+      );
+
+      await delay(waitTime);
+    }
+  }
 }
 
 const interviewReportSchema = z.object({
@@ -79,6 +95,11 @@ const interviewReportSchema = z.object({
     )
     .describe(
       "A day-wise preparation plan for the candidate to prepare for the interview",
+    ),
+  title: z
+    .string()
+    .describe(
+      "The title of the jobfor which the interview report is generated",
     ),
 });
 
@@ -163,7 +184,7 @@ IMPORTANT:
 - Return all five sections.
 `;
 
-  const response = await ai.models.generateContent({
+  const response = await generateWithRetry({
     model: "gemini-3.5-flash-lite",
     contents: prompt,
     config: {
